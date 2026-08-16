@@ -5,18 +5,18 @@
   "pip_spec": "ovos-skill-metronome",
   "license": "GPL-3.0-or-later",
   "author": "andlo",
-  "name": "Metronome",
-  "description": "En metronom til OVOS - saet en tempo i BPM og faa et hoerbart klik, justerbar taktart. Deterministisk timing, ingen lydsamples noedvendige (en genereret klik-tone). Nyttig for musikere der oever offline.",
+  "name": "Metronom",
+  "description": "En metronom - sæt et tempo i bpm og få et hørbart klik med accent på hvert fjerde slag. Fuldstændig deterministisk og offline: genererede kliktoner, ikke optagelser.",
   "examples": [
-    "saet en metronom til 120 bpm",
+    "sæt en metronom til 120 bpm",
     "start en metronom",
     "stop metronomen"
   ],
   "tags": [
-    "music",
-    "metronome",
+    "musik",
+    "metronom",
     "tempo",
-    "practice"
+    "øvelse"
   ],
   "icon": "https://raw.githubusercontent.com/andlo/ovos-skill-metronome/main/icon.png"
 }

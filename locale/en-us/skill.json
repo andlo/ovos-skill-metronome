@@ -6,7 +6,7 @@
   "license": "GPL-3.0-or-later",
   "author": "andlo",
   "name": "Metronome",
-  "description": "A metronome for OVOS - set a tempo in BPM and get an audible click track, adjustable time signature. Deterministic timing, no audio samples required (a generated click tone). Useful for musicians practicing offline.",
+  "description": "A metronome - set a tempo in BPM and get an audible click track with an accented downbeat. Fully deterministic and offline: generated click tones, not recordings.",
   "examples": [
     "set a metronome to 120 bpm",
     "start a metronome",

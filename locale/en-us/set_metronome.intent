@@ -1,0 +1,5 @@
+set a metronome to {bpm} bpm
+set the metronome to {bpm} bpm
+start a metronome at {bpm} bpm
+start the metronome at {bpm} bpm
+metronome {bpm} bpm
