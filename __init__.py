@@ -65,7 +65,13 @@ class Metronome(OVOSSkill):
         self._thread = None
         self._last_bpm = None  # remembered so bare "start the metronome" can resume it
 
-    def _click_loop(self, bpm, beats_per_measure):
+    def _click_loop(self, bpm, beats_per_measure, message=None):
+        # `message` (the utterance that started the metronome) is kept as
+        # a positional argument on purpose: play_audio() finds its session
+        # via dig_for_message(), which searches the call stack's
+        # positional arguments for a Message. Without it every click
+        # logged "No session context in message" and wasn't tied to the
+        # session (e.g. a HiveMind client) that started the metronome.
         interval = 60.0 / bpm
         beat = 0
         next_time = time.monotonic()
@@ -82,12 +88,12 @@ class Metronome(OVOSSkill):
                 # rather than firing a burst of catch-up clicks
                 next_time = time.monotonic()
 
-    def _start(self, bpm, beats_per_measure=BEATS_PER_MEASURE):
+    def _start(self, bpm, beats_per_measure=BEATS_PER_MEASURE, message=None):
         self._stop()
         self._last_bpm = bpm
         self._stop_event.clear()
         self._thread = threading.Thread(
-            target=self._click_loop, args=(bpm, beats_per_measure), daemon=True)
+            target=self._click_loop, args=(bpm, beats_per_measure, message), daemon=True)
         self._thread.start()
 
     def _stop(self):
@@ -102,6 +108,20 @@ class Metronome(OVOSSkill):
     def shutdown(self):
         self._stop()
 
+    # Global "stop" support. ovos-core's stop pipeline asks every skill
+    # can_stop() and calls stop() on those that say yes - without these,
+    # plain "stop" never reached the metronome, only its own
+    # "stop the metronome" intent did. ovos-workshop requires can_stop()
+    # whenever stop() is implemented.
+    def can_stop(self, message):
+        return self._is_running()
+
+    def stop(self):
+        if not self._is_running():
+            return False
+        self._stop()
+        return True
+
     @intent_handler("set_metronome.intent")
     def handle_set_metronome(self, message):
         bpm_raw = message.data.get("bpm")
@@ -113,13 +133,13 @@ class Metronome(OVOSSkill):
         if not (MIN_BPM <= bpm <= MAX_BPM):
             self.speak_dialog("bpm_out_of_range", {"min": MIN_BPM, "max": MAX_BPM})
             return
-        self._start(bpm)
+        self._start(bpm, message=message)
         self.speak_dialog("metronome_started", {"bpm": bpm})
 
     @intent_handler("start_metronome.intent")
     def handle_start_metronome(self, message):
         bpm = self._last_bpm or DEFAULT_BPM
-        self._start(bpm)
+        self._start(bpm, message=message)
         self.speak_dialog("metronome_started", {"bpm": bpm})
 
     @intent_handler("stop_metronome.intent")
