@@ -126,3 +126,50 @@ def test_sound_files_actually_exist(skill):
     from pathlib import Path
     assert Path(ACCENT_SOUND).exists()
     assert Path(CLICK_SOUND).exists()
+
+
+# --- global stop + session context (issue #2) ---
+
+def test_can_stop_only_while_running(skill):
+    skill.play_audio = MagicMock()
+    assert skill.can_stop(MagicMock()) is False
+    skill._start(240)
+    assert skill.can_stop(MagicMock()) is True
+    skill._stop()
+    assert skill.can_stop(MagicMock()) is False
+
+
+def test_global_stop_stops_a_running_metronome(skill):
+    skill.play_audio = MagicMock()
+    skill._start(240)
+    assert skill.stop() is True
+    assert not skill._is_running()
+
+
+def test_global_stop_when_nothing_runs_reports_nothing_stopped(skill):
+    assert skill.stop() is False
+
+
+def test_clicks_carry_the_triggering_message_for_session_context(skill):
+    """play_audio() finds the session via dig_for_message(), which only
+    looks at positional args up the call stack - the click thread has to
+    have the triggering Message there, or every click logs 'No session
+    context in message' and loses the caller's session."""
+    from ovos_bus_client.message import Message, dig_for_message
+    found = []
+    skill.play_audio = MagicMock(side_effect=lambda *a, **kw: found.append(dig_for_message()))
+    trigger = Message("recognizer_loop:utterance", {"utterances": ["start a metronome"]},
+                      {"session": {"session_id": "kitchen"}})
+    skill._start(600, message=trigger)
+    time.sleep(0.1)
+    skill._stop()
+    assert found and all(m is trigger for m in found)
+
+
+def test_intent_handlers_pass_their_message_to_the_click_thread(skill):
+    skill.play_audio = MagicMock()
+    skill.speak_dialog = MagicMock()
+    skill._start = MagicMock()
+    message = MagicMock()
+    skill.handle_start_metronome(message)
+    assert skill._start.call_args.kwargs["message"] is message
