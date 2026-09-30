@@ -40,12 +40,15 @@ tempo stops any existing one first. A daemon thread is used so the
 skill shuts down cleanly even if stop() isn't called for any reason.
 """
 
+import re
 import threading
 import time
 from pathlib import Path
 
-from ovos_workshop.skills import OVOSSkill
+from ovos_utils.ocp import MediaEntry, MediaType, PlaybackType
 from ovos_workshop.decorators import intent_handler
+from ovos_workshop.decorators.ocp import ocp_play, ocp_search
+from ovos_workshop.skills.common_play import OVOSCommonPlaybackSkill
 from ovos_number_parser import extract_number
 
 SOUNDS_DIR = Path(__file__).resolve().parent / "sounds"
@@ -57,11 +60,47 @@ MIN_BPM = 20
 MAX_BPM = 300
 BEATS_PER_MEASURE = 4  # accent every 4th beat - fixed for now, see README
 
+# "start a metronome" / "play a metronome" is taken by the OCP pipeline
+# before padatious, so the skill also answers OCP's search (issue #4),
+# and OCP hands playback back via @ocp_play (PlaybackType.SKILL - the
+# clicks are played here). OCP only asks skills that support the media
+# type it guessed, so AUDIO, MUSIC and GENERIC are accepted and the
+# result echoes the query's type.
+OCP_MEDIA = [MediaType.AUDIO, MediaType.MUSIC, MediaType.GENERIC]
+OCP_CONFIDENCE = 100
 
-class Metronome(OVOSSkill):
+
+BPM_WORDS = r"(?:bpm|beats per minute|slag i minuttet)"
+
+
+def _pop_bpm(text, lang):
+    """(bpm, text without it) for "... 90 bpm" / "... ninety bpm" /
+    "... one hundred bpm". Tries the nearest one, two, then three words
+    before the unit, so "metronome 60 bpm" keeps "metronome".
+    (None, text) when there is no bpm; (False, text) when it doesn't parse."""
+    m = re.search(rf"((?:\w+ ){{1,3}}){BPM_WORDS}\b", text + " ")
+    if not m:
+        return None, text
+    words = m.group(1).split()
+    for n in range(1, len(words) + 1):
+        cand = " ".join(words[-n:])
+        value = extract_number(cand, lang=lang)
+        if value not in (False, None):
+            span = re.search(rf"\b{re.escape(cand)} {BPM_WORDS}\b", text)
+            return int(round(value)), (text[:span.start()] + " " + text[span.end():])
+    return False, text
+
+
+class Metronome(OVOSCommonPlaybackSkill):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, supported_media=OCP_MEDIA,
+                         skill_icon=str(SOUNDS_DIR.parent / "icon.png"), **kwargs)
 
     def initialize(self):
-        self._stop_event = threading.Event()
+        # NB: not self._click_stop - OVOSCommonPlaybackSkill uses that
+        # name for its search, and sets it whenever an OCP search stops.
+        self._click_stop = threading.Event()
         self._thread = None
         self._last_bpm = None  # remembered so bare "start the metronome" can resume it
 
@@ -75,14 +114,14 @@ class Metronome(OVOSSkill):
         interval = 60.0 / bpm
         beat = 0
         next_time = time.monotonic()
-        while not self._stop_event.is_set():
+        while not self._click_stop.is_set():
             sound = ACCENT_SOUND if beat % beats_per_measure == 0 else CLICK_SOUND
             self.play_audio(sound, instant=True)
             beat += 1
             next_time += interval
             sleep_time = next_time - time.monotonic()
             if sleep_time > 0:
-                self._stop_event.wait(sleep_time)
+                self._click_stop.wait(sleep_time)
             else:
                 # fell behind (slow call, system hiccup, etc) - resync
                 # rather than firing a burst of catch-up clicks
@@ -91,13 +130,13 @@ class Metronome(OVOSSkill):
     def _start(self, bpm, beats_per_measure=BEATS_PER_MEASURE, message=None):
         self._stop()
         self._last_bpm = bpm
-        self._stop_event.clear()
+        self._click_stop.clear()
         self._thread = threading.Thread(
             target=self._click_loop, args=(bpm, beats_per_measure, message), daemon=True)
         self._thread.start()
 
     def _stop(self):
-        self._stop_event.set()
+        self._click_stop.set()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2)
         self._thread = None
@@ -113,7 +152,7 @@ class Metronome(OVOSSkill):
     # plain "stop" never reached the metronome, only its own
     # "stop the metronome" intent did. ovos-workshop requires can_stop()
     # whenever stop() is implemented.
-    def can_stop(self, message):
+    def can_stop(self, message=None):
         return self._is_running()
 
     def stop(self):
@@ -121,6 +160,58 @@ class Metronome(OVOSSkill):
             return False
         self._stop()
         return True
+
+    # ------------------------------------------------------------------
+    # OCP: "start a metronome", "play a metronome at 90 bpm" (issue #4)
+    # ------------------------------------------------------------------
+
+    def _ocp_match(self, phrase, lang):
+        """bpm when the phrase asks for a metronome and nothing else:
+        "a metronome", "the metronome at 90 bpm". Leftover words -> None."""
+        text = " ".join(re.findall(r"\w+", (phrase or "").lower()))
+        bpm, text = _pop_bpm(text, lang)
+        if bpm is False or (bpm is not None and not (MIN_BPM <= bpm <= MAX_BPM)):
+            return None
+        words = text.split()
+        anchors = {w.lower() for w in self.voc_list("metronome", lang)}
+        if not anchors.intersection(words):
+            return None
+        filler = {w.lower() for w in self.voc_list("filler", lang)}
+        if [w for w in words if w not in anchors and w not in filler]:
+            return None
+        return bpm or self._last_bpm or DEFAULT_BPM
+
+    @ocp_search()
+    def search_metronome(self, phrase, media_type=MediaType.GENERIC):
+        bpm = self._ocp_match(phrase, self.lang)
+        if not bpm:
+            return []
+        return [MediaEntry(
+            # not file:// - OCP's files extractor would make it AUDIO
+            uri=f"/{self.skill_id}/{bpm}",
+            title=f"Metronome, {bpm} bpm",
+            artist="Metronome",
+            media_type=media_type if media_type in OCP_MEDIA else MediaType.AUDIO,
+            playback=PlaybackType.SKILL,
+            match_confidence=OCP_CONFIDENCE,
+            skill_icon=self.skill_icon,
+            skill_id=self.skill_id,
+        )]
+
+    def activate(self, duration_minutes=None):
+        """ovos-workshop 7.x (stable/testing): OVOSCommonPlaybackSkill's
+        play handler calls self.activate(), which only ConversationalSkill
+        has there. 9.x dropped the call. This skill doesn't converse."""
+
+    @ocp_play()
+    def play_metronome(self, message=None):
+        """OCP picked our search result - start clicking."""
+        uri = (message.data.get("uri") if message else "") or ""
+        try:
+            bpm = int(uri.rstrip("/").rsplit("/", 1)[-1])
+        except ValueError:
+            bpm = DEFAULT_BPM
+        self._start(min(max(bpm, MIN_BPM), MAX_BPM), message=message)
 
     @intent_handler("set_metronome.intent")
     def handle_set_metronome(self, message):
