@@ -1,0 +1,5 @@
+{"utterance": "sæt en metronom til 120 bpm", "lang": "da-DK", "skill_id": "ovos-skill-metronome.andlo", "intent_label": "set_metronome"}
+{"utterance": "sæt metronomen til 90 bpm", "lang": "da-DK", "skill_id": "ovos-skill-metronome.andlo", "intent_label": "set_metronome"}
+{"utterance": "sæt metronomen til 60 slag i minuttet", "lang": "da-DK", "skill_id": "ovos-skill-metronome.andlo", "intent_label": "set_metronome"}
+{"utterance": "start en metronom", "lang": "da-DK", "skill_id": "ovos-skill-metronome.andlo", "intent_label": "start_metronome"}
+{"utterance": "start metronomen", "lang": "da-DK", "skill_id": "ovos-skill-metronome.andlo", "intent_label": "start_metronome"}
